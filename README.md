@@ -5,6 +5,7 @@ A small floating window in the top-right corner of your Mac. Press **Control + O
 - **Running chat:** every screenshot adds to the same conversation, so you can capture a figure, scroll, then capture the question, and Claude puts them together. **New Chat** starts over.
 - **Multiple choice:** shows just the number and letter, like **3.** B. If you've already picked an answer it adds ✅ or ❌.
 - **Follow-ups:** type in the box at the bottom, like "explain 4".
+- **Collapse:** click the collapse button (top right of the window) or press **Control + Option + C** to shrink it to a small icon in the corner. It shows **…** while working and a green **●** when a new answer is ready. Click the icon or press **Control + Option + C** again to expand.
 - The window stays out of its own screenshots.
 
 ## What you need
@@ -48,7 +49,8 @@ There's also an icon in the menu bar for capturing, starting a new chat, showing
 ## Troubleshooting
 
 - **"Couldn't capture the screen":** the permission isn't on for this exact copy of the app. In Settings, remove Screen Answers with **–**, add it again with **+**, then quit and reopen it from Finder.
-- **If you rebuild the app** (for example after pulling updates), macOS treats it as a new app. Repeat the permission steps above.
+- **If you rebuild the app** (for example after pulling updates), macOS treats it as a new app. Run `tccutil reset ScreenCapture com.coopercohen.screenanswers2` in Terminal, then repeat the permission steps above.
+- **To stop rebuilds from breaking the permission:** in Keychain Access, go to **Certificate Assistant → Create a Certificate…** and make one named `Screen Answers Signing`, with Identity Type **Self-Signed Root** and Certificate Type **Code Signing**. `build.sh` uses it automatically, so the app keeps the same identity across rebuilds. Grant permission once more after the first build that uses it.
 - **"Your API key was rejected":** menu bar icon → **Change API Key…** and paste it again.
 - A log is kept at `~/Library/Logs/ScreenAnswers.log`. It never includes your key or screenshots.
 

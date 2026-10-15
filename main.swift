@@ -68,6 +68,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var task: Task<Void, Never>?
     var chatID = 0                         // bumps on New Chat so stale replies are ignored
 
+    // Collapse state
+    var mainStack: NSStackView!
+    var pill: NSButton!
+    var collapsed = false
+    var expandedSize = NSSize(width: 380, height: 460)
+    var hasUnread = false
+
     func applicationDidFinishLaunching(_ n: Notification) {
         AppDelegate.shared = self
         buildMainMenu()
@@ -119,7 +126,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.lineBreakMode = .byTruncatingTail
         statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let topRow = NSStackView(views: [captureButton, newChatButton, statusLabel])
+        let collapseButton = NSButton(image: NSImage(systemSymbolName: "arrow.down.right.and.arrow.up.left", accessibilityDescription: "Collapse")!,
+                                      target: self, action: #selector(toggleCollapse))
+        collapseButton.bezelStyle = .rounded
+        collapseButton.toolTip = "Collapse (⌃⌥C)"
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.init(1), for: .horizontal)
+        let topRow = NSStackView(views: [captureButton, newChatButton, statusLabel, spacer, collapseButton])
         topRow.orientation = .horizontal
         topRow.spacing = 6
 
@@ -151,6 +164,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             inputField.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24),
         ])
         scroll.setContentHuggingPriority(.defaultLow, for: .vertical)
+        topRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
+        mainStack = stack
+
+        // Shown only when collapsed: a small icon that expands the window when clicked.
+        pill = NSButton(title: "", image: NSImage(systemSymbolName: "text.viewfinder", accessibilityDescription: "Expand")!,
+                        target: self, action: #selector(toggleCollapse))
+        pill.isBordered = false
+        pill.imagePosition = .imageLeading
+        pill.toolTip = "Expand (⌃⌥C)"
+        pill.translatesAutoresizingMaskIntoConstraints = false
+        pill.isHidden = true
+        bg.addSubview(pill)
+        NSLayoutConstraint.activate([
+            pill.leadingAnchor.constraint(equalTo: bg.leadingAnchor),
+            pill.trailingAnchor.constraint(equalTo: bg.trailingAnchor),
+            pill.topAnchor.constraint(equalTo: bg.topAnchor),
+            pill.bottomAnchor.constraint(equalTo: bg.bottomAnchor),
+        ])
+    }
+
+    /// Shrinks the window to a small icon in its top-right corner, or restores it.
+    @objc func toggleCollapse() {
+        let f = panel.frame
+        let buttons: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
+        if collapsed {
+            collapsed = false
+            hasUnread = false
+            let vf = panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? f
+            var r = NSRect(x: f.maxX - expandedSize.width, y: f.maxY - expandedSize.height,
+                           width: expandedSize.width, height: expandedSize.height)
+            r.origin.x = min(max(r.minX, vf.minX), vf.maxX - r.width)
+            r.origin.y = min(max(r.minY, vf.minY), vf.maxY - r.height)
+            pill.isHidden = true
+            mainStack.isHidden = false
+            buttons.forEach { panel.standardWindowButton($0)?.isHidden = false }
+            panel.styleMask.insert(.resizable)
+            panel.minSize = NSSize(width: 260, height: 200)
+            panel.setFrame(r, display: true, animate: true)
+        } else {
+            collapsed = true
+            expandedSize = f.size
+            mainStack.isHidden = true
+            buttons.forEach { panel.standardWindowButton($0)?.isHidden = true }
+            panel.styleMask.remove(.resizable)
+            panel.minSize = .zero
+            let size = NSSize(width: 64, height: 32)
+            panel.setFrame(NSRect(x: f.maxX - size.width, y: f.maxY - size.height, width: size.width, height: size.height),
+                           display: true, animate: true)
+            pill.isHidden = false
+            updatePill()
+        }
+        panel.orderFrontRegardless()
+    }
+
+    /// Collapsed icon shows "…" while working and "●" when a new answer is waiting.
+    func updatePill() {
+        guard collapsed else { return }
+        pill.title = busy ? "…" : (hasUnread ? "●" : "")
+        pill.contentTintColor = hasUnread ? .systemGreen : nil
     }
 
     func buildStatusItem() {
@@ -159,6 +231,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.addItem(withTitle: "Capture Screen (⌃⌥A)", action: #selector(capture), keyEquivalent: "").target = self
         menu.addItem(withTitle: "New Chat", action: #selector(newChat), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Collapse / Expand (⌃⌥C)", action: #selector(toggleCollapse), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Show / Hide Window", action: #selector(toggleWindow), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Change API Key…", action: #selector(resetKey), keyEquivalent: "").target = self
         menu.addItem(.separator())
@@ -183,7 +256,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = main
     }
 
-    func setStatus(_ s: String) { statusLabel.stringValue = s }
+    func setStatus(_ s: String) {
+        statusLabel.stringValue = s
+        updatePill()
+    }
 
     /// Redraws the whole chat, plus an in-progress reply if there is one.
     func refresh() {
@@ -339,6 +415,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 streamingText = nil
                 messages.append(["role": "assistant", "content": blocks])
                 transcript.append(shown.isEmpty ? "(no answer)" : shown)
+                busy = false
+                if collapsed { hasUnread = true }
                 setStatus("Done · ⌃⌥A to capture more")
                 refresh()
             } catch {
@@ -347,6 +425,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 messages.removeLast()                  // drop the unanswered turn so the chat stays valid
                 let cancelled = error is CancellationError || (error as? URLError)?.code == .cancelled
                 if !cancelled {
+                    if collapsed { hasUnread = true }
                     setStatus("Error")
                     transcript.append("⚠️ \(error.localizedDescription)")
                 }
@@ -467,14 +546,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func registerHotKey() {
         var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-        InstallEventHandler(GetApplicationEventTarget(), { _, _, _ in
-            Task { @MainActor in AppDelegate.shared.capture() }
+        InstallEventHandler(GetApplicationEventTarget(), { _, event, _ in
+            var hk = EventHotKeyID()
+            GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+                              nil, MemoryLayout<EventHotKeyID>.size, nil, &hk)
+            let id = hk.id
+            Task { @MainActor in
+                if id == 2 { AppDelegate.shared.toggleCollapse() } else { AppDelegate.shared.capture() }
+            }
             return noErr
         }, 1, &spec, nil, nil)
-        var ref: EventHotKeyRef?
+        var captureRef: EventHotKeyRef?
         RegisterEventHotKey(UInt32(kVK_ANSI_A), UInt32(controlKey | optionKey),
                             EventHotKeyID(signature: OSType(0x53414E53), id: 1),
-                            GetApplicationEventTarget(), 0, &ref)
+                            GetApplicationEventTarget(), 0, &captureRef)
+        var collapseRef: EventHotKeyRef?
+        RegisterEventHotKey(UInt32(kVK_ANSI_C), UInt32(controlKey | optionKey),
+                            EventHotKeyID(signature: OSType(0x53414E53), id: 2),
+                            GetApplicationEventTarget(), 0, &collapseRef)
     }
 
     func apiKey() -> String? {

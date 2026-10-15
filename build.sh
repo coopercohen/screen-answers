@@ -22,7 +22,15 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
 </dict>
 </plist>
 EOF
-# Note: each rebuild changes the app's signature, so macOS needs Screen Recording
-# permission granted again afterwards (tccutil reset ScreenCapture com.coopercohen.screenanswers2).
-codesign --force --sign - "$APP"
+# Sign with a self-signed "Screen Answers Signing" certificate if you've made one
+# (Keychain Access → Certificate Assistant → Create a Certificate, type Code Signing).
+# That keeps the app's identity stable, so Screen Recording permission survives rebuilds.
+# Without it, the app is ad-hoc signed and permission must be granted again after each build.
+if security find-identity -p codesigning | grep -q "Screen Answers Signing"; then
+  codesign --force --sign "Screen Answers Signing" "$APP"
+  echo "Signed with Screen Answers Signing certificate"
+else
+  codesign --force --sign - "$APP"
+  echo "Ad-hoc signed (re-grant Screen Recording permission after this build)"
+fi
 echo "Built $(pwd)/$APP"
